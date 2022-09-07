@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -182,7 +183,18 @@ var _ = g.Describe("[sig-auth][Feature:OpenShiftAuthorization] The default clust
 
 	oc := exutil.NewCLI("default-rbac-policy")
 
-	g.It("should have correct RBAC rules", func() {
+	g.It(fmt.Sprintf("should have correct RBAC rules [apigroup:%s][apigroup:%s][apigroup:%s][apigroup:%s][apigroup:%s][apigroup:%s][apigroup:%s][apigroup:%s][apigroup:%s][apigroup:%s]",
+		buildGroup,
+		userGroup,
+		projectGroup,
+		authzGroup,
+		security.GroupName,
+		consoleGroup,
+		"helm.openshift.io",
+		templateGroup,
+		operatorsCoreOSGroup,
+		imageGroup,
+	), func() {
 		kubeInformers := informers.NewSharedInformerFactory(oc.AdminKubeClient(), 20*time.Minute)
 		ruleResolver := exutil.NewRuleResolver(kubeInformers.Rbac().V1()) // signal what informers we want to use early
 
