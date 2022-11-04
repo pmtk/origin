@@ -2064,3 +2064,21 @@ func DoesApiResourceExist(config *rest.Config, apiResourceName string) (bool, er
 
 	return false, nil
 }
+
+func DoesApiGroupExist(config *rest.Config, apiGroupName string) (bool, error) {
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return false, err
+	}
+	apiGroups, _, err := discoveryClient.ServerGroupsAndResources()
+	if err != nil {
+		return false, err
+	}
+	for _, apiGroup := range apiGroups {
+		if apiGroup.Name == apiGroupName {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}

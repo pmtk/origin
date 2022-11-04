@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	kuser "k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/client-go/informers"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	rbacvalidation "k8s.io/component-helpers/auth/rbac/validation"
 	kauthenticationapi "k8s.io/kubernetes/pkg/apis/authentication"
@@ -85,7 +86,17 @@ var (
 		rbacv1helpers.NewRule("create").Groups(kAuthzGroup).Resources("selfsubjectaccessreviews", "selfsubjectrulesreviews").RuleOrDie(),
 
 		rbacv1helpers.NewRule("delete").Groups(oauthGroup, legacyOauthGroup).Resources("oauthaccesstokens", "oauthauthorizetokens").RuleOrDie(),
+	}
+	unauthenticatedURLsMicroShift = []rbacv1.PolicyRule{
+		// this is from upstream kube
+		rbacv1helpers.NewRule("get").URLs(
+			"/healthz", "/livez",
+			"/version",
+			"/version/",
+		).RuleOrDie(),
+	}
 
+	unauthenticatedURLs = []rbacv1.PolicyRule{
 		// this is openshift specific
 		rbacv1helpers.NewRule("get").URLs(
 			"/version/openshift",
@@ -98,59 +109,58 @@ var (
 		rbacv1helpers.NewRule("get").URLs(
 			"/readyz",
 		).RuleOrDie(),
+	}
 
+	allAuthenticatedRules = []rbacv1.PolicyRule{
+		rbacv1helpers.NewRule("create").Groups(buildGroup, legacyBuildGroup).Resources("builds/docker", "builds/optimizeddocker").RuleOrDie(),
+		rbacv1helpers.NewRule("create").Groups(buildGroup, legacyBuildGroup).Resources("builds/jenkinspipeline").RuleOrDie(),
+		rbacv1helpers.NewRule("create").Groups(buildGroup, legacyBuildGroup).Resources("builds/source").RuleOrDie(),
+
+		rbacv1helpers.NewRule("get").Groups(userGroup, legacyUserGroup).Resources("users").Names("~").RuleOrDie(),
+		rbacv1helpers.NewRule("list").Groups(projectGroup, legacyProjectGroup).Resources("projectrequests").RuleOrDie(),
+		rbacv1helpers.NewRule("get", "list").Groups(authzGroup, legacyAuthzGroup).Resources("clusterroles").RuleOrDie(),
+		rbacv1helpers.NewRule(read...).Groups(rbacGroup).Resources("clusterroles").RuleOrDie(),
+		rbacv1helpers.NewRule("get", "list").Groups(storageGroup).Resources("storageclasses").RuleOrDie(),
+		rbacv1helpers.NewRule("get", "list", "watch").Groups(snapshotGroup).Resources("volumesnapshotclasses").RuleOrDie(),
+		rbacv1helpers.NewRule("list", "watch").Groups(projectGroup, legacyProjectGroup).Resources("projects").RuleOrDie(),
+
+		rbacv1helpers.NewRule("use").Groups(security.GroupName).Resources("securitycontextconstraints").Names("restricted-v2").RuleOrDie(),
+
+		// These custom resources are used to extend console functionality
+		// The console team is working on eliminating this exception in the near future
+		rbacv1helpers.NewRule(read...).Groups(consoleGroup).Resources("consoleclidownloads", "consolelinks", "consoleexternalloglinks", "consolenotifications", "consoleyamlsamples", "consolequickstarts", "consoleplugins").RuleOrDie(),
+
+		// HelmChartRepository instances keep Helm chart repository configuration
+		// By default users are able to browse charts from all configured repositories through console UI
+		rbacv1helpers.NewRule("get", "list").Groups("helm.openshift.io").Resources("helmchartrepositories").RuleOrDie(),
+	}
+
+	authenticatedURLsMicroShift = []rbacv1.PolicyRule{
 		// this is from upstream kube
 		rbacv1helpers.NewRule("get").URLs(
-			"/healthz", "/livez",
-			"/version",
-			"/version/",
+			"/",
+			"/openapi", "/openapi/*",
+			"/api", "/api/*",
+			"/apis", "/apis/*",
 		).RuleOrDie(),
 	}
 
-	allAuthenticatedRules = append(
-		[]rbacv1.PolicyRule{
-			rbacv1helpers.NewRule("create").Groups(buildGroup, legacyBuildGroup).Resources("builds/docker", "builds/optimizeddocker").RuleOrDie(),
-			rbacv1helpers.NewRule("create").Groups(buildGroup, legacyBuildGroup).Resources("builds/jenkinspipeline").RuleOrDie(),
-			rbacv1helpers.NewRule("create").Groups(buildGroup, legacyBuildGroup).Resources("builds/source").RuleOrDie(),
+	authenticatedURLs = []rbacv1.PolicyRule{
+		// TODO: remove when openshift-apiserver has removed these
+		rbacv1helpers.NewRule("get").URLs(
+			"/healthz/",
+			"/oapi", "/oapi/*",
+			"/osapi", "/osapi/",
+			"/swaggerapi", "/swaggerapi/*", "/swagger.json", "/swagger-2.0.0.pb-v1",
+			"/version/*",
+			"/",
+		).RuleOrDie(),
+	}
 
-			rbacv1helpers.NewRule("get").Groups(userGroup, legacyUserGroup).Resources("users").Names("~").RuleOrDie(),
-			rbacv1helpers.NewRule("list").Groups(projectGroup, legacyProjectGroup).Resources("projectrequests").RuleOrDie(),
-			rbacv1helpers.NewRule("get", "list").Groups(authzGroup, legacyAuthzGroup).Resources("clusterroles").RuleOrDie(),
-			rbacv1helpers.NewRule(read...).Groups(rbacGroup).Resources("clusterroles").RuleOrDie(),
-			rbacv1helpers.NewRule("get", "list").Groups(storageGroup).Resources("storageclasses").RuleOrDie(),
-			rbacv1helpers.NewRule("get", "list", "watch").Groups(snapshotGroup).Resources("volumesnapshotclasses").RuleOrDie(),
-			rbacv1helpers.NewRule("list", "watch").Groups(projectGroup, legacyProjectGroup).Resources("projects").RuleOrDie(),
-
-			rbacv1helpers.NewRule("use").Groups(security.GroupName).Resources("securitycontextconstraints").Names("restricted-v2").RuleOrDie(),
-
-			// These custom resources are used to extend console functionality
-			// The console team is working on eliminating this exception in the near future
-			rbacv1helpers.NewRule(read...).Groups(consoleGroup).Resources("consoleclidownloads", "consolelinks", "consoleexternalloglinks", "consolenotifications", "consoleyamlsamples", "consolequickstarts", "consoleplugins").RuleOrDie(),
-
-			// HelmChartRepository instances keep Helm chart repository configuration
-			// By default users are able to browse charts from all configured repositories through console UI
-			rbacv1helpers.NewRule("get", "list").Groups("helm.openshift.io").Resources("helmchartrepositories").RuleOrDie(),
-
-			// TODO: remove when openshift-apiserver has removed these
-			rbacv1helpers.NewRule("get").URLs(
-				"/healthz/",
-				"/oapi", "/oapi/*",
-				"/osapi", "/osapi/",
-				"/swaggerapi", "/swaggerapi/*", "/swagger.json", "/swagger-2.0.0.pb-v1",
-				"/version/*",
-				"/",
-			).RuleOrDie(),
-
-			// this is from upstream kube
-			rbacv1helpers.NewRule("get").URLs(
-				"/",
-				"/openapi", "/openapi/*",
-				"/api", "/api/*",
-				"/apis", "/apis/*",
-			).RuleOrDie(),
-		},
-		allUnauthenticatedRules...,
-	)
+	allAuthenticatedOAuthRules = []rbacv1.PolicyRule{
+		rbacv1helpers.NewRule("create").Groups(projectGroup, legacyProjectGroup).Resources("projectrequests").RuleOrDie(),
+		rbacv1helpers.NewRule("get", "list", "watch", "delete").Groups(oauthGroup).Resources("useroauthaccesstokens").RuleOrDie(),
+	}
 
 	// group -> namespace -> rules
 	groupNamespaceRules = map[string]map[string][]rbacv1.PolicyRule{
@@ -182,6 +192,40 @@ var _ = g.Describe("[sig-auth][Feature:OpenShiftAuthorization] The default clust
 
 	oc := exutil.NewCLI("default-rbac-policy")
 
+	var (
+		newUnauthd             []rbacv1.PolicyRule
+		newAuthd               []rbacv1.PolicyRule
+		newAuthdOAuth          []rbacv1.PolicyRule
+		newGroupNamespaceRules map[string]map[string][]rbacv1.PolicyRule
+	)
+
+	g.BeforeEach(func() {
+		// TODO: Urls for microshift
+		// configmap -n kube-public microshift-version exists
+		newUnauthd = append(getExisting(allUnauthenticatedRules, oc.AdminConfig()), unauthenticatedURLs...)
+		newAuthd = append(getExisting(allUnauthenticatedRules, oc.AdminConfig()), newUnauthd...)
+		newAuthd = append(newAuthd, authenticatedURLs...)
+		newAuthdOAuth = getExisting(newAuthdOAuth, oc.AdminConfig())
+
+		newGroupNamespaceRules = make(map[string]map[string][]rbacv1.PolicyRule)
+		for group, namespaces := range groupNamespaceRules {
+			for namespace, rules := range namespaces {
+				for _, rule := range rules {
+					if exists(rule, oc.AdminConfig()) {
+						if _, ok := newGroupNamespaceRules[group]; !ok {
+							newGroupNamespaceRules[group] = map[string][]rbacv1.PolicyRule{}
+						}
+						if _, ok := newGroupNamespaceRules[group][namespace]; !ok {
+							newGroupNamespaceRules[group][namespace] = []rbacv1.PolicyRule{rule}
+						} else {
+							newGroupNamespaceRules[group][namespace] = append(newGroupNamespaceRules[group][namespace], rule)
+						}
+					}
+				}
+			}
+		}
+	})
+
 	g.It("should have correct RBAC rules", func() {
 		kubeInformers := informers.NewSharedInformerFactory(oc.AdminKubeClient(), 20*time.Minute)
 		ruleResolver := exutil.NewRuleResolver(kubeInformers.Rbac().V1()) // signal what informers we want to use early
@@ -208,18 +252,15 @@ var _ = g.Describe("[sig-auth][Feature:OpenShiftAuthorization] The default clust
 		}
 
 		g.By("should only allow the system:authenticated group to access certain policy rules", func() {
-			testAllGroupRules(ruleResolver, kuser.AllAuthenticated, allAuthenticatedRules, namespaces.Items)
+			testAllGroupRules(ruleResolver, kuser.AllAuthenticated, newAuthd, namespaces.Items)
 		})
 
 		g.By("should only allow the system:unauthenticated group to access certain policy rules", func() {
-			testAllGroupRules(ruleResolver, kuser.AllUnauthenticated, allUnauthenticatedRules, namespaces.Items)
+			testAllGroupRules(ruleResolver, kuser.AllUnauthenticated, newUnauthd, namespaces.Items)
 		})
 
 		g.By("should only allow the system:authenticated:oauth group to access certain policy rules", func() {
-			testAllGroupRules(ruleResolver, "system:authenticated:oauth", []rbacv1.PolicyRule{
-				rbacv1helpers.NewRule("create").Groups(projectGroup, legacyProjectGroup).Resources("projectrequests").RuleOrDie(),
-				rbacv1helpers.NewRule("get", "list", "watch", "delete").Groups(oauthGroup).Resources("useroauthaccesstokens").RuleOrDie(),
-			}, namespaces.Items)
+			testAllGroupRules(ruleResolver, "system:authenticated:oauth", newAuthdOAuth, namespaces.Items)
 		})
 
 	})
@@ -267,4 +308,24 @@ func rulesToString(rules []rbacv1.PolicyRule) string {
 	}
 
 	return strings.Join(missingDescriptions.List(), "\n")
+}
+
+func exists(rule rbacv1.PolicyRule, config *rest.Config) bool {
+	res, err := exutil.DoesApiGroupExist(config, rule.APIGroups[0])
+	if err != nil {
+		exutil.FatalErr(err)
+	}
+	return res
+}
+
+func getExisting(rules []rbacv1.PolicyRule, config *rest.Config) []rbacv1.PolicyRule {
+	out := []rbacv1.PolicyRule{}
+	for _, rule := range rules {
+		if exists(rule, config) {
+			out = append(out, rule)
+		} else {
+			e2e.Logf("group does not exists: %#v\n", rule)
+		}
+	}
+	return out
 }
